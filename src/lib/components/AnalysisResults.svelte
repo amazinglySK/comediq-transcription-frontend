@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { marked } from 'marked';
+	import { onMount, onDestroy } from 'svelte';
+	import Mark from 'mark.js';
 
 	interface Props {
 		filename: string;
@@ -10,6 +12,13 @@
 
 	let { filename, transcript, analysis, segmentation }: Props = $props();
 
+	// Search functionality
+	let searchQuery = $state('');
+	let transcriptElement: HTMLElement;
+	let markInstance: Mark;
+	let currentMatchIndex = $state(0);
+	let totalMatches = $state(0);
+
 	// Format time in MM:SS format
 	function formatTime(seconds: number): string {
 		const mins = Math.floor(seconds / 60);
@@ -17,9 +26,129 @@
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	}
 
+	// Search and highlight functionality
+	function performSearch() {
+		if (!markInstance || !searchQuery.trim()) {
+			markInstance?.unmark();
+			totalMatches = 0;
+			currentMatchIndex = 0;
+			return;
+		}
+
+		markInstance.unmark({
+			done: () => {
+				markInstance.mark(searchQuery.trim(), {
+					separateWordSearch: false,
+					caseSensitive: false,
+					each: (element) => {
+						element.addEventListener('click', () => {
+							element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						});
+					},
+					done: (totalMarks) => {
+						totalMatches = totalMarks;
+						currentMatchIndex = totalMarks > 0 ? 1 : 0;
+						// Scroll to first match
+						if (totalMarks > 0) {
+							const firstMark = transcriptElement.querySelector('mark');
+							firstMark?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						}
+					}
+				});
+			}
+		});
+	}
+
+	function navigateToMatch(direction: 'next' | 'prev') {
+		const marks = transcriptElement.querySelectorAll('mark');
+		if (marks.length === 0) return;
+
+		// Remove current highlight
+		marks.forEach(mark => mark.classList.remove('bg-warning', 'text-warning-content'));
+
+		if (direction === 'next') {
+			currentMatchIndex = currentMatchIndex >= totalMatches ? 1 : currentMatchIndex + 1;
+		} else {
+			currentMatchIndex = currentMatchIndex <= 1 ? totalMatches : currentMatchIndex - 1;
+		}
+
+		// Highlight current match
+		const currentMark = marks[currentMatchIndex - 1];
+		if (currentMark) {
+			currentMark.classList.add('bg-warning', 'text-warning-content');
+			currentMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+	}
+
+	function clearSearch() {
+		searchQuery = '';
+		markInstance?.unmark();
+		totalMatches = 0;
+		currentMatchIndex = 0;
+	}
+
+	// Preprocess markdown to handle tables in code blocks
+	function preprocessMarkdown(text: string): string {
+		// Pattern to match code blocks that contain markdown tables
+		const codeBlockWithTableRegex = /```(?:markdown|md)?\s*\n((?:[^\n]*\|[^\n]*\n?)+)\s*```/gi;
+		
+		// Extract tables from code blocks and convert them back to regular markdown
+		let processed = text.replace(codeBlockWithTableRegex, (match, tableContent) => {
+			// Check if the content actually looks like a markdown table
+			const lines = tableContent.trim().split('\n');
+			const hasTableSeparator = lines.some((line: string) => /^\s*\|?[\s\-:|]+\|?\s*$/.test(line));
+			
+			if (hasTableSeparator) {
+				// Return the table content without code block wrapper
+				return '\n' + tableContent.trim() + '\n';
+			}
+			
+			// If it's not a table, keep the original code block
+			return match;
+		});
+
+		// Also handle tables wrapped in generic code blocks (without language specified)
+		const genericCodeBlockRegex = /```\s*\n((?:[^\n]*\|[^\n]*\n?)+)\s*```/gi;
+		processed = processed.replace(genericCodeBlockRegex, (match, content) => {
+			const lines = content.trim().split('\n');
+			const hasTableSeparator = lines.some((line: string) => /^\s*\|?[\s\-:|]+\|?\s*$/.test(line));
+			const looksLikeTable = lines.length > 1 && lines.every((line: string) => line.includes('|'));
+			
+			if (hasTableSeparator || looksLikeTable) {
+				return '\n' + content.trim() + '\n';
+			}
+			
+			return match;
+		});
+
+		return processed;
+	}
+
 	// Process markdown to HTML
-    console.log(analysis);
-	const analysisHtml = $derived(marked(analysis));
+	const analysisHtml = $derived(() => {
+		const processedAnalysis = preprocessMarkdown(analysis);
+		return marked(processedAnalysis, {
+			gfm: true, // Enable GitHub Flavored Markdown for better table support
+			breaks: true // Convert line breaks to <br>
+		});
+	});
+
+	onMount(() => {
+		if (transcriptElement) {
+			markInstance = new Mark(transcriptElement);
+		}
+	});
+
+	onDestroy(() => {
+		markInstance?.unmark();
+	});
+
+	// Reactive search
+	$effect(() => {
+		if (markInstance) {
+			performSearch();
+		}
+	});
 </script>
 
 <!-- Analysis Results Cards -->
@@ -32,9 +161,64 @@
 				<h2 class="text-xl font-semibold">Transcript</h2>
 			</div>
 		</div>
+		
 		<div class="card-body">
+			<!-- Search Section -->
+			<div class="mb-4">
+				<div class="flex items-center gap-2 mb-2">
+					<div class="flex-1">
+						<div class="input-group">
+							<input 
+								type="text" 
+								placeholder="Search in transcript..." 
+								class="input input-bordered input-sm flex-1"
+								bind:value={searchQuery}
+							/>
+							{#if searchQuery}
+								<button 
+									class="btn btn-sm btn-ghost" 
+									onclick={clearSearch}
+									title="Clear search"
+								>
+									<span class="material-icons text-sm">close</span>
+								</button>
+							{/if}
+							<span class="btn btn-sm btn-ghost">
+								<span class="material-icons text-sm">search</span>
+							</span>
+						</div>
+					</div>
+					
+					<!-- Search Navigation Controls -->
+					{#if totalMatches > 0}
+						<div class="flex items-center gap-2">
+							<span class="text-sm opacity-75">{currentMatchIndex} of {totalMatches}</span>
+							<div class="join">
+								<button 
+									class="btn btn-xs btn-outline join-item" 
+									onclick={() => navigateToMatch('prev')}
+									disabled={totalMatches === 0}
+									title="Previous match"
+								>
+									<span class="material-icons text-sm">keyboard_arrow_up</span>
+								</button>
+								<button 
+									class="btn btn-xs btn-outline join-item" 
+									onclick={() => navigateToMatch('next')}
+									disabled={totalMatches === 0}
+									title="Next match"
+								>
+									<span class="material-icons text-sm">keyboard_arrow_down</span>
+								</button>
+							</div>
+						</div>
+					{/if}
+				</div>
+			</div>
+			
+			<!-- Transcript Content -->
 			<div class="max-h-96 overflow-y-auto">
-				<p class="text-base">{transcript}</p>
+				<p class="text-base" bind:this={transcriptElement}>{transcript}</p>
 			</div>
 		</div>
 	</div>
@@ -49,7 +233,7 @@
 		</div>
 		<div class="card-body">
 			<div class="markdown-content prose prose-sm max-w-none">
-				{@html analysisHtml}
+				{@html analysisHtml()}
 			</div>
 		</div>
 	</div>
@@ -151,6 +335,16 @@
 
 	:global(.markdown-content td) {
 		@apply border border-base-300 px-3 py-2;
+	}
+
+	/* Search highlight styles */
+	:global(mark) {
+		@apply bg-accent/30 text-accent-content rounded px-1;
+		cursor: pointer;
+	}
+
+	:global(mark.bg-warning) {
+		@apply bg-warning text-warning-content;
 	}
 
 	:global(.markdown-content blockquote) {

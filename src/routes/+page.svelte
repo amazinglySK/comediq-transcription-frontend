@@ -7,6 +7,7 @@
   import AnalysisResults from '$lib/components/AnalysisResults.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import LoadingScreen from '$lib/components/LoadingScreen.svelte';
+  import { tick } from 'svelte';
   import { addToast } from '$lib/stores/toastStore';
   import { analysisHistory, type AnalysisHistoryItem } from '$lib/stores/analysisHistoryStore';
 
@@ -24,6 +25,7 @@
   let analyzing = $state(false);
   let showTestResults = $state(false);
   let currentAnalysis = $state<AnalysisHistoryItem | null>(null);
+  let analyzerRef: any;
   
   // Subscribe to analysis history
   let history = $state<AnalysisHistoryItem[]>([]);
@@ -123,11 +125,22 @@ The **adulting struggle** theme resonates well with millennial audiences. The **
   }
 
   function handleRecordingStop(data: { audioBlob: Blob; audioUrl: string }) {
-    recording = false;
-    audioBlob = data.audioBlob;
-    audioUrl = data.audioUrl;
-    
-    addToast('Recording completed successfully', 'success', 3000);
+    (async () => {
+      recording = false;
+      audioBlob = data.audioBlob;
+      audioUrl = data.audioUrl;
+      
+      addToast('Recording completed successfully', 'success', 3000);
+
+      // Wait for AudioAnalyzer to render (it appears when audioUrl && !analyzing)
+      await tick();
+      try {
+        // If the analyzer component is available, submit the recorded blob
+        analyzerRef?.submitFile?.(data.audioBlob, `recording-${Date.now()}.wav`);
+      } catch (err) {
+        console.error('Failed to auto-submit recording for analysis', err);
+      }
+    })();
   }
 
   function handleDownload() {
@@ -371,7 +384,7 @@ The **adulting struggle** theme resonates well with millennial audiences. The **
             <RecordingControls 
               {recording}
               {audioUrl}
-              disabled={uploadedFile !== null}
+              disabled={uploadedFile !== null || analyzing}
               onRecordingStart={handleRecordingStart}
               onRecordingStop={handleRecordingStop}
               onDownload={handleDownload}
@@ -384,6 +397,7 @@ The **adulting struggle** theme resonates well with millennial audiences. The **
                 {audioBlob}
                 {uploadedFile}
                 {analyzing}
+                bind:this={analyzerRef}
                 onAnalysisStart={handleAnalysisStart}
                 onAnalysisComplete={handleAnalysisComplete}
               />

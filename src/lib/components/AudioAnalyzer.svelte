@@ -23,35 +23,45 @@
   let formElement: HTMLFormElement;
   let hiddenFileInput: HTMLInputElement;
 
-  function handleSubmit(event: Event) {
-    event.preventDefault();
-    
-    if (!hiddenFileInput || (!audioBlob && !uploadedFile)) {
-      console.log('Missing requirements for submit');
+  function prepareAndSubmitFile(file: File | Blob, filename = 'recording.wav') {
+    if (!hiddenFileInput) {
+      console.log('Hidden input not ready for submit');
       return;
     }
 
     // Create a DataTransfer object to set files on the input
     const dataTransfer = new DataTransfer();
-    
-    if (uploadedFile) {
-      console.log('Using uploadedFile for form submission');
-      const wavFile = createWavFile(uploadedFile, uploadedFile.name);
-      dataTransfer.items.add(wavFile);
-    } else if (audioBlob) {
-      console.log('Using audioBlob for form submission');
-      const wavFile = createWavFile(audioBlob, 'recording.wav');
-      dataTransfer.items.add(wavFile);
-    }
-    
+
+    // Ensure we have a File instance
+    const wavFile = createWavFile(file, filename);
+    dataTransfer.items.add(wavFile);
+
     // Set the files on the hidden input
     hiddenFileInput.files = dataTransfer.files;
-    
-    console.log('Hidden input files:', hiddenFileInput.files);
-    console.log('Hidden input file[0]:', hiddenFileInput.files?.[0]);
-    
-    // Now submit the form
+
+    // Submit the form
     formElement.requestSubmit();
+  }
+
+  // Exported helper so parent can programmatically submit a blob/file
+  export function submitFile(file: File | Blob, filename?: string) {
+    prepareAndSubmitFile(file, filename);
+  }
+
+  function handleSubmit(event: Event) {
+    event.preventDefault();
+
+    if (!hiddenFileInput || (!audioBlob && !uploadedFile)) {
+      console.log('Missing requirements for submit');
+      return;
+    }
+
+    // Use existing state to submit
+    if (uploadedFile) {
+      prepareAndSubmitFile(uploadedFile, uploadedFile.name);
+    } else if (audioBlob) {
+      prepareAndSubmitFile(audioBlob, 'recording.wav');
+    }
   }
 </script>
 
